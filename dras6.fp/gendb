@@ -1,0 +1,784 @@
+#!/usr/bin/perl
+#
+# $Revision: gendb,v 1.50 2008/10/27 21:47:55 roberts Exp $
+#
+# Merges XML files with minimal database
+# Changes/adds object properties for stress/CHO testing.
+#
+use strict;
+my $lease_log;
+my $ddns;
+my $dhcp_domain;
+my $dhcpv6_enable;
+my $v6_rapid_commit;
+my $ddns_txt_rec;
+my $fo_split;
+my $ipv6;
+my $thresholds;
+my $set_ntp;
+my $set_snmp;
+my $set_email;
+my $syslog_prio = 'notice';
+my $dir;
+my $client_ip;
+my (%count, $tftp_test, $http_test, $d, $i, $line, $type, $vnode, $arg);
+my $perf_test = 1;
+my ($no_backup, $no_recycle_bin, $no_lease_recycle, $lease_time);
+my (@rate_limits,$txid_threshold,$port_threshold);
+my @full_mem;
+my $force_speed;
+my ($recursion, $forward_only);
+my $client_is_gw;
+my $num_views;
+my $webportal;
+my $named_threads;
+my $log_queries;
+my $radius;
+my ($port_threshold, $txid_threshold, $rate, $burst, $net, $mask);
+my $max_recursive;
+my $max_cache_size;
+my $dns_root;
+my $chap;
+my $dnssec;
+my $rate_limit_enabled = 'false';
+my $dns_alert_enabled = 'false';
+my $nios_version = 'unknown';
+my $nios_version_major = 99999;
+my $nios_version_minor = 99999;
+my $nios_version_revision = 99999;
+my $nios_version_patch = 99999;
+my $nios_version_cl = 'unknown';
+my $outfile = 'database.tar.gz';
+my $tarball = 'database.tar.gz';
+
+usage() unless @ARGV > 0;
+while ($arg=shift @ARGV){
+	if ($arg eq '-c'){
+		$client_ip = shift @ARGV;
+		warn "Client IP: $client_ip\n";
+	}
+	elsif ($arg eq '-d'){
+		$dir = shift @ARGV;
+	}
+	elsif ($arg eq '-i'){
+		$tarball = shift @ARGV;
+	}
+	elsif ($arg eq '-o'){
+		$outfile = shift @ARGV;
+	}
+	elsif ($arg eq '-C'){
+		$perf_test = 0;          # option for CHO test
+		warn "Database created for CHO test\n";
+	}
+	elsif ($arg eq '-G'){
+		$client_is_gw = 1;          # Set gateway to client_ip
+	}
+	elsif ($arg eq '-u'){
+		$ddns = 1;
+	}
+	elsif ($arg eq '-l'){
+		$lease_log = shift @ARGV;
+	}
+	elsif ($arg eq '-L'){
+		$lease_time = shift @ARGV;
+		print STDERR "Default lease time $lease_time\n";
+	}
+	elsif ($arg eq '-r'){
+		$recursion = 1;
+	}
+	elsif ($arg eq '-forward_only'){
+		$forward_only =1;
+	}
+	elsif ($arg eq '-t'){
+		$thresholds = 1;
+	}
+	elsif ($arg eq '-http'){
+		$http_test = 1;
+	}
+	elsif ($arg eq '-ipv6'){
+		$ipv6 = 1;
+	}
+	elsif ($arg eq '-tftp'){
+		$tftp_test = 1;
+	}
+	elsif ($arg eq '-F'){
+		@full_mem = split(/\,/, shift @ARGV);
+		print "Full Members: @full_mem\n";
+	}
+	elsif ($arg eq '-S'){
+		$syslog_prio = shift @ARGV;
+	}
+	elsif ($arg eq '-1000'){
+		warn "Ethernet port speed forced to 1000 Mbps\n";
+		$force_speed = '1000';
+	}
+	elsif ($arg eq '-100'){
+		warn "Ethernet port speed forced to 100 Mbps\n";
+		$force_speed = '100';
+	}
+	elsif ($arg eq '-dhcp_domain'){
+		$dhcp_domain = shift;
+		$ddns = '1';
+	}
+	elsif ($arg eq '-ddns_txt_rec'){
+		$ddns_txt_rec = shift;
+	}
+	elsif ($arg eq '-fo_split'){
+		$fo_split = shift;
+		warn "Setting DHCP FO split to $fo_split\n";
+	}
+	elsif ($arg eq '-no-backup'){
+		$no_backup ='1';
+	}
+	elsif ($arg eq '-no-lease-recycle'){
+		$no_lease_recycle ='1';
+	}
+	elsif ($arg eq '-no-recycle-bin'){
+		$no_recycle_bin ='1';
+	}
+	elsif ($arg eq '-webportal'){
+		$webportal = shift; # Next argument is webui memory allocated 
+	}
+	elsif ($arg eq '-max-recursive'){
+		$max_recursive = shift; #Recursive DNS clients
+	}
+	elsif ($arg eq '-max-cache'){
+		$max_cache_size = shift; #Recursive DNS cache
+		if ( $max_cache_size < 0 || $max_cache_size > 4095){
+			die "\t 0 <= max-cache <= 4095\n";
+		}
+	}
+	elsif ($arg eq '-radius'){
+		$radius = shift; #Number of users to add
+		warn "Enabling RADIUS and adding $radius users\n";
+	}
+	elsif ($arg eq '-dnssec'){
+		$dnssec = 'y';
+		warn "Enabling DNSSEC\n";
+	}
+	elsif ($arg eq '-dhcpv6'){
+		$dhcpv6_enable = 'y';
+		$ipv6 = 1;
+		warn "Enabling DHCPv6 and IPv6\n";
+	}
+	elsif ($arg eq '-rapid-commit'){
+		$v6_rapid_commit = 'y';
+		warn "Enabling DHCPv6 rapid commit\n";
+	}
+	elsif ($arg eq '-rate-limit'){
+		push(@rate_limits, [split(/\:/, shift @ARGV)]);
+		$rate_limit_enabled = 'true';
+	}
+	elsif ($arg eq '-dns-alert'){
+		$txid_threshold = shift;
+		$port_threshold = shift;
+		$dns_alert_enabled = 'true';
+		warn "DNS Alerts Enabled TXID thresh: $txid_threshold PORT thresh: $port_threshold\n";
+	}
+	elsif ($arg eq '-views'){
+		$num_views = shift;
+	}
+	elsif ($arg eq '-named-threads'){
+		$named_threads = shift;
+	}
+	elsif ($arg eq '-dns-root'){
+		$dns_root = shift;
+	}
+	elsif ($arg eq '-log-queries'){
+		$log_queries = '1';
+	}
+	elsif ($arg eq '-chap'){
+		$chap = '1';
+	}
+	else {
+		usage("Unknown option: $arg");
+	}
+}
+unless (defined($lease_time)){
+	if ($perf_test){
+		$lease_time = 86400;
+	}
+	else {
+		$lease_time = 300;
+	}
+}
+my $indb = "onedb.xml";
+my $outdb = "onedb.xml-new";
+my @virtual_nodes;
+print STDERR "OUTFILE $outfile\n";
+print STDERR "IN FILE $tarball\n";
+print STDERR "DIR $dir\n";
+usage("No client IP") unless $client_ip || $perf_test;
+
+chdir($dir) || die;
+if (system("tar -xvzf $tarball >/dev/null")){
+	die "Could not untar database file: $!\n";
+}
+system("cp $tarball ${tarball}-orig");
+unless ( -f $indb ){
+	die "Onedb file $indb does not exist\n";
+}
+if ( system("cp $indb ${indb}-orig")){
+	die "Copy failed\n";
+}
+
+open(INP, $indb) || die "Open $indb: $!\n";
+open(OUT, ">$outdb") || die "Open $outdb: $!\n";
+my $line = <INP>;
+print OUT $line;
+if ($line =~ /VERSION\=\"([^\"]+)\"/){
+	$nios_version = $1;
+	if ($nios_version =~ /(\d+)\.(\d+)r(\d+)-(\d+)-(\d+)/){
+		$nios_version_major = $1;
+		$nios_version_minor = $2;
+		$nios_version_revision = $3;
+		$nios_version_patch = $4;
+		$nios_version_cl = $5;
+	}
+	else {
+		if ($nios_version =~ /^(\d+)\.x\-/){
+			$nios_version_major = $1;
+			warn "This is a MAIN build.  NIOS major version: $nios_version_major\n";
+		}
+		else {
+			warn "Can't find NIOS major version in $nios_version\n";
+		}
+	}
+}
+else {
+	warn "Can't find NIOS version in $line\n";
+}
+
+print STDERR "NIOS Version Major: $nios_version_major Minor: $nios_version_minor Rev: $nios_version_revision ",
+	"Patch: $nios_version_patch Changelist: $nios_version_cl\n";
+
+while ($line=<INP>){
+	next if $line =~ /\<\/DATABASE\>/;
+	if ( $line =~ /__type\".*\"\.com\.infoblox\.([^\"]+)\"/){
+		$type = $1;
+		$count{$type}++;
+	}
+	next if  $type eq 'one.cluster_email';
+	if ( $type eq 'one.virtual_node'){
+		$vnode = get_property(\$line,'virtual_oid');
+		if ( $vnode == 0  ||  grep( $_ == $vnode || $_ eq 'all', @full_mem)){
+			set_property(\$line, 'is_potential_master','true');
+			print "Made Vnode $vnode a full member\n";
+		} 
+		else {
+			set_property(\$line, 'is_potential_master','false');
+			print "Made Vnode $vnode a partial member\n";
+		}
+		if ( $client_is_gw){
+			set_property(\$line, 'gateway',$client_ip);
+		}
+		if ($ipv6){
+			set_property(\$line, 'ipv6_enabled','true');
+			my $ipv6 = labipv6(get_property(\$line,'virtual_ip'));
+			my $gwv6 = labipv6(get_property(\$line,'gateway'));
+			warn "Vnode $vnode IPv6 $ipv6 Gateway $gwv6\n";
+			print OUT qq(<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.one.member_virtual_ip"/><PROPERTY NAME="anycast_usage" VALUE="false"/><PROPERTY NAME="interface_type" VALUE="LAN_HA"/><PROPERTY NAME="virtual_node" VALUE="$vnode"/><PROPERTY NAME="v_ip" VALUE="$ipv6"/><PROPERTY NAME="subnet_mask" VALUE="64"/><PROPERTY NAME="gateway" VALUE="$gwv6"/></OBJECT>\n);
+			print OUT qq(<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.dns.member_dns_ip"/><PROPERTY NAME="member_dns_properties" VALUE="$vnode"/><PROPERTY NAME="member_virtual_ip" VALUE="0.$ipv6"/></OBJECT>\n);
+		}
+
+		# If RADIUS is already enabled, then the import will fail.
+		if (defined($radius)){
+print OUT qq(<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.radius.ln_vnode_to_user_root"/><PROPERTY NAME="virtual_node" VALUE="$vnode"/><PROPERTY NAME="user_root" VALUE="0"/></OBJECT>
+<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.radius.member_dhcp_auth"/><PROPERTY NAME="service_enabled" VALUE="false"/><PROPERTY NAME="enable_syslog_auth_success" VALUE="true"/><PROPERTY NAME="syslog_auth_success_level" VALUE="info"/><PROPERTY NAME="enable_syslog_auth_failure" VALUE="true"/> <PROPERTY NAME="syslog_auth_failure_level" VALUE="info"/><PROPERTY NAME="enforce_quarantine_expiration_time" VALUE="true"/><PROPERTY NAME="quarantine_expiration_time" VALUE="30"/><PROPERTY NAME="enable_guest" VALUE="false"/><PROPERTY NAME="guest_mac_expiration_type" VALUE="0"/><PROPERTY NAME="guest_first_name_required" VALUE="false"/><PROPERTY NAME="guest_middle_name_required" VALUE="false"/><PROPERTY NAME="guest_last_name_required" VALUE="false"/><PROPERTY NAME="guest_email_required" VALUE="false"/><PROPERTY NAME="guest_phone_required" VALUE="false"/><PROPERTY NAME="guest_custom_field1_required" VALUE="false"/><PROPERTY NAME="guest_custom_field2_required" VALUE="false"/><PROPERTY NAME="guest_custom_field3_required" VALUE="false"/><PROPERTY NAME="guest_custom_field4_required" VALUE="false"/><PROPERTY NAME="authorized_mac_expiration_type" VALUE="0"/><PROPERTY NAME="enable_uca" VALUE="false"/><PROPERTY NAME="virtual_node" VALUE="$vnode"/><PROPERTY NAME="member_radius_properties" VALUE="$vnode"/></OBJECT>
+<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.radius.member_radius_auth"/><PROPERTY NAME="virtual_node" VALUE="$vnode"/><PROPERTY NAME="member_radius_properties" VALUE="$vnode"/></OBJECT>
+<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.radius.member_self_service_portal"/><PROPERTY NAME="self_service_portal_enabled" VALUE="false"/><PROPERTY NAME="virtual_node" VALUE="$vnode"/><PROPERTY NAME="member_radius_properties" VALUE="$vnode"/></OBJECT>
+<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.radius.ln_nas_to_member"/><PROPERTY NAME="disabled" VALUE="false"/><PROPERTY NAME="override_shared_secret" VALUE="false"/><PROPERTY NAME="nas" VALUE="$client_ip"/><PROPERTY NAME="member" VALUE="$vnode"/></OBJECT>
+<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.radius.radius_auth_method"/><PROPERTY NAME="auth_type" VALUE="1"/><PROPERTY NAME="action_on_success" VALUE="Success"/><PROPERTY NAME="action_on_failure" VALUE="Reject"/><PROPERTY NAME="member_radius_auth" VALUE="$vnode"/><PROPERTY NAME="position" VALUE="0"/><PROPERTY NAME="auth_method" VALUE=".com.infoblox.radius.user_root\$0"/></OBJECT>
+);
+		}
+
+	if ( $rate_limit_enabled eq 'true' || $dns_alert_enabled eq 'true'){
+		print OUT qq(
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.member_dns_monitor"/>
+<PROPERTY NAME="member_dns_properties" VALUE="$vnode"/>
+<PROPERTY NAME="monitor_enabled" VALUE="$dns_alert_enabled"/>
+<PROPERTY NAME="rate_limit_enabled" VALUE="$rate_limit_enabled"/>
+</OBJECT>);
+	my $j =0;
+	foreach my $i (@rate_limits){
+		($net,$mask, $rate, $burst) = @$i;
+		print OUT qq(
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.one.member_rate_limit"/>
+<PROPERTY NAME="rule_id" VALUE="$j"/>
+<PROPERTY NAME="rule_position" VALUE="0"/>
+<PROPERTY NAME="rate_limit_if" VALUE="ALL"/>
+<PROPERTY NAME="rate_limit_proto" VALUE="UDP"/>
+<PROPERTY NAME="rate_limit_port" VALUE="0"/>
+<PROPERTY NAME="rate_limit_port_direction" VALUE="ANY"/>
+<PROPERTY NAME="rate_limit" VALUE="$rate"/>
+<PROPERTY NAME="rate_limit_burst" VALUE="$burst"/>
+<PROPERTY NAME="virtual_node" VALUE="$vnode"/>
+<PROPERTY NAME="rate_limit_enabled" VALUE="true"/>
+<PROPERTY NAME="rate_limit_ip" VALUE="$net"/>
+<PROPERTY NAME="rate_limit_ip_mask" VALUE="$mask"/>
+</OBJECT>);
+		$j++;
+	}
+	if ($dns_alert_enabled){
+		print OUT qq(
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.member_dns_trigger"/>
+<PROPERTY NAME="trigger_type" VALUE="PORT"/>
+<PROPERTY NAME="threshold_units" VALUE="PERCENT"/>
+<PROPERTY NAME="threshold_value" VALUE="$port_threshold"/>
+<PROPERTY NAME="sample_interval" VALUE="60"/>
+<PROPERTY NAME="member_dns_properties" VALUE="$vnode"/>
+<PROPERTY NAME="trigger_enabled" VALUE="true"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.member_dns_trigger"/>
+<PROPERTY NAME="trigger_type" VALUE="TXID"/>
+<PROPERTY NAME="threshold_units" VALUE="PERCENT"/>
+<PROPERTY NAME="threshold_value" VALUE="$txid_threshold"/>
+<PROPERTY NAME="sample_interval" VALUE="60"/>
+<PROPERTY NAME="member_dns_properties" VALUE="$vnode"/>
+<PROPERTY NAME="trigger_enabled" VALUE="true"/>
+</OBJECT>);
+		}
+
+	}
+	}
+	if ($type eq 'radius.member_radius_authentication_service' && defined($radius)){
+			warn "Enabling RADIUS auth in member_radius_authentication_service\n";
+			set_property(\$line,'enabled', 'true');
+			set_property(\$line,'mode', '1');
+	}
+	if ($type eq 'radius.member_radius_properties' && defined($radius)){
+			warn "Enabling RADIUS in member_radius_properties\n";
+			set_property(\$line,'service_enabled', 'true');
+			if (defined($chap)){
+				set_property(\$line,'chap_enabled', 'true');
+			}
+	}
+	if ( $type eq 'one.physical_node' && $force_speed){
+		my $pn_hwtype = get_property(\$line, 'hwtype');
+		if ( $pn_hwtype =~ /CISCO|RSP|VNIOS/){
+
+			warn "Skipping port settings for virtual member\n";
+		}
+		else {
+			set_property(\$line,'enable_auto_lan', 'false');
+			set_property(\$line,'lan_port_duplex', 'Full');
+			set_property(\$line,'enable_auto_ha', 'false');
+			set_property(\$line,'ha_port_duplex', 'Full');
+			set_property(\$line,'lan_port_speed', $force_speed);
+			set_property(\$line,'ha_port_speed', $force_speed);
+		}
+	}
+	if ( $type eq 'dns.member_dhcp_properties'){
+		my $vnode = get_property(\$line,'virtual_node');
+		set_property(\$line,'service_enabled', 'true');
+		if ($dhcpv6_enable){
+			set_property(\$line,'v6_service_enable', 'true');
+			set_property(\$line,'v6_server_duid', '00:01:00:01:de:ad:be:ef:0a:0b:0c:0d:0e:0f');
+			set_property(\$line,'use_v6_domain_name', 'true');
+			   if (defined($dhcp_domain)){
+				set_property(\$line,'v6_domain_name', $dhcp_domain);
+			   }
+			   else {
+				set_property(\$line,'v6_domain_name', "ddnszone$vnode");
+			   }
+			if ($v6_rapid_commit){
+				print OUT qq(<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.dns.option"/><PROPERTY NAME="parent" VALUE=".com.infoblox.dns.member_dhcp_properties\$$vnode"/><PROPERTY NAME="option_name" VALUE="DHCPv6.dhcp6.rapid-commit"/><PROPERTY NAME="value" VALUE="true"/></OBJECT>\n);
+			}
+
+		}
+		if ($ddns){
+			if ($dhcpv6_enable){
+			   set_property(\$line,'v6_enable_ddns', 'true');
+			   #set_property(\$line,'use_v6_enable_ddns', 'true');
+			   ##set_property(\$line,'use_v6_ddns_hostname', 'true');
+			}
+
+			set_property(\$line,'local_ddns_updates_enabled', 'true');
+			set_property(\$line,'remote_ddns_updates_enabled', 'true');
+			set_property(\$line,'override_local_dns_updates_enabled', 'true');
+			set_property(\$line,'override_remote_dns_updates_enabled', 'true');
+			set_property(\$line,'override_domain_name', 'true');
+			unless (defined($vnode)){
+				die "Could not get vnode property from $type\n";
+			}
+			$vnode=undef if $vnode == 0;
+			if (defined($dhcp_domain)){
+				set_property(\$line,'domain_name', $dhcp_domain);
+			}
+			else {
+				set_property(\$line,'domain_name', "ddnszone$vnode");
+			}
+		}
+	}
+	elsif ($type eq 'dns.cluster_dhcp_properties'){
+			set_property(\$line,'authoritative', 'true');
+			set_property(\$line,'ping_number', '0');
+			set_property(\$line,'lease_time', $lease_time);
+		if (defined($lease_log)){
+			set_property(\$line,'log_lease_events', 'true');
+			set_property(\$line,'logging_member', $lease_log);
+		}
+		if (defined($ddns_txt_rec)){
+			set_property(\$line,'ddns_txt_record_handling', $ddns_txt_rec);
+		}
+		if ($thresholds){
+			set_property(\$line,'enable_threshold_email_warnings', 'false');
+			set_property(\$line,'enable_dhcp_thresholds', 'true');
+			set_property(\$line,'enable_threshold_snmp_warnings', 'false');
+		}
+		if (defined($no_lease_recycle)){
+			set_property(\$line,'recycle_leases', 'false');
+		}
+		if ($ddns){
+			if ($dhcpv6_enable){
+				warn "\n\n\tEnabling DDNS updates at Grid level...\n";
+			   set_property(\$line,'v6_enable_ddns', 'true');
+			   #set_property(\$line,'v6_ddns_hostname', 'true');
+			   if (defined($dhcp_domain)){
+				set_property(\$line,'v6_ddns_domainname', $dhcp_domain);
+			   }
+			   else {
+				set_property(\$line,'v6_ddns_domainname', "ddnszone$vnode");
+			   }
+			}
+			set_property(\$line,'retry_dns_updates_interval', '1');
+			set_property(\$line,'ddns_no_client_fqdn', 'false');
+			set_property(\$line,'update_static_leases', 'true');
+			set_property(\$line,'local_dns_updates_enabled', 'true');
+			set_property(\$line,'ddns_use_client_fqdn', 'true');
+			set_property(\$line,'ddns_server_use_fqdn', 'true');
+			set_property(\$line,'domain_name', 'ddnszone');
+		}
+		if ($num_views){
+		  set_property(\$line,'network_views_count', $num_views);
+		}	
+
+	}
+	elsif ($type eq 'dns.member_views_item' && defined($max_cache_size)){
+	  		set_property(\$line,'max_cache_size', $max_cache_size);
+	}
+	elsif ($type eq 'dns.member_dns_properties'){
+		if (defined($max_recursive)){
+	  		set_property(\$line,'limit_recursive_clients', 'true');
+	  		set_property(\$line,'numberof_recursive_clients', $max_recursive);
+		}
+		if (defined($named_threads)){
+			warn "Setting named worker threads to: $named_threads\n";
+			set_property(\$line, 'named_worker_threads', $named_threads);
+		}
+	}		
+	elsif ($type eq 'dns.cluster_dns_properties'){
+		if ($log_queries){
+		  	set_property(\$line,'log_queries', 'true');
+		}
+		if ($recursion){
+		  	set_property(\$line,'recursion_enabled', 'true');
+		}
+		else {
+		  	set_property(\$line,'recursion_enabled', 'false');
+		}
+		if ($forward_only){
+		  	set_property(\$line,'forwarders_only', 'true');
+		}
+		else {
+		  	set_property(\$line,'forwarders_only', 'false');
+		}
+		if ($dnssec){
+		  	set_property(\$line,'dnssec_enabled', 'true');
+		}
+		if ($dns_root){
+		  	set_property(\$line,'custom_root_server', 'true');
+			print OUT qq(<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.root_server"/>
+<PROPERTY NAME="position" VALUE="0"/>
+<PROPERTY NAME="cluster_dns_properties" VALUE="0"/>
+<PROPERTY NAME="address" VALUE="$dns_root"/>
+<PROPERTY NAME="name" VALUE="my.fake-root.org"/>
+</OBJECT>\n);
+		}
+
+		if ($perf_test){
+		  set_property(\$line,'minimal_response', 'true');
+		  set_property(\$line,'allow_update_forwarding', 'false');
+		  set_property(\$line,'enable_secondary_notify', 'true');
+		}
+		else {
+		  set_property(\$line,'minimal_response', 'false');
+		  set_property(\$line,'allow_update_forwarding', 'true');
+		  set_property(\$line,'enable_secondary_notify', 'false');
+		}
+		if ($num_views){
+		  set_property(\$line,'views_count', $num_views);
+		}	
+	}
+	elsif ($type eq 'one.cluster' && defined($no_recycle_bin)){
+		  set_property(\$line,'enable_recycle_bin', 'false');
+	}
+	elsif ($type eq 'one.cluster_security'){
+		  set_property(\$line,'session_timeout', '999666');
+		  set_property(\$line,'support_access_enabled', 'true');
+		  set_property(\$line,'remote_console_access_enabled', 'true');
+	}
+	elsif ($type eq 'one.cluster_monitor'){
+		if ($perf_test){
+		  set_property(\$line,'enable_snmp_get', 'false');
+		  set_property(\$line,'enable_snmp', 'false');
+		  set_property(\$line,'enable_syslog_server', 'false');
+	        }
+		else {
+		  set_property(\$line,'enable_snmp_get', 'true');
+		  set_property(\$line,'community_string', 'public');
+		  set_property(\$line,'community_str_for_get', 'public');
+		  set_property(\$line,'enable_snmp', 'true');
+		  set_property(\$line,'enable_syslog_server', 'true');
+		}
+	}
+	elsif ( $type eq 'one.wizard_data_record'){
+		  set_property(\$line,'value', '0');
+	}
+	elsif ( $type eq 'dns.dhcp_failover_association'){
+		warn "FOund DHCP Failover Assoc Setting split $fo_split\n";
+		if (defined($fo_split)){
+			set_property(\$line,'split', $fo_split);
+		}
+	}
+	elsif ($type eq 'one.cluster_time'){
+		if ($perf_test){
+		  set_property(\$line,'ntp_enabled', 'false');
+		}
+		else {
+		  set_property(\$line,'ntp_enabled', 'true');
+		}
+		if ($nios_version_major < 5){
+			set_property(\$line,'time_zone', '(UMT - 8:00) Pacific Time (US and Canada), Tijuana');
+		}
+		else {  
+			set_property(\$line,'time_zone', '(UTC - 8:00) Pacific Time (US and Canada), Tijuana');      
+		}
+
+	}
+	elsif ($type eq 'one.scheduled_backups' && defined($no_backup)){
+		  set_property(\$line,'disabled', 'true');
+	}
+	elsif ($type eq 'one.member_tftp_properties'){
+		if ($tftp_test){
+			set_property(\$line,'tftp_enabled', 'true');
+			my $vnode = get_property(\$line,'virtual_node');
+			unless (defined($vnode)){
+				die "Could not get vnode property from $type\n";
+			}
+			push(@virtual_nodes,$vnode);
+		}
+		if ($http_test){
+			set_property(\$line,'http_enabled', 'true');
+			set_property(\$line,'http_acl_enabled', 'false');
+		}
+	}
+	elsif ($type eq 'one.webui_host' && defined($webportal)){
+			set_property(\$line,'webui_show', 'true');
+			set_property(\$line,'webui_enabled', 'true');
+			set_property(\$line,'ui_memory', $webportal);
+			set_property(\$line,'ftp_enabled', 'true');
+			set_property(\$line,'ftp_login', 'admin');
+			set_property(\$line,'ftp_password', '{0}_{3des}_EAAAAMoSGhWm0soTrAIiavr3lik=');
+	}
+	elsif ( grep( $type eq $_, ('dns.cluster_ddns_updater','dns.cluster_qacl_item',
+				'dns.cluster_tacl_item','one.cluster_email','one.ntp_server',
+				'one.cluster_syslog_server','one.cluster_trap_receiver'))){
+		next;
+	}
+
+	print OUT $line;
+	$type = undef;
+}
+if ($nios_version_major < 5){
+	if ($recursion){
+		print OUT qq(<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.dns.cluster_rqacl_item"/><PROPERTY NAME="permission" VALUE="0"/><PROPERTY NAME="position" VALUE="6"/><PROPERTY NAME="address_option" VALUE="2"/><PROPERTY NAME="cluster_dns_properties" VALUE="0"/><PROPERTY NAME="address" VALUE="any"/><PROPERTY NAME="netmask" VALUE="255.255.255.255"/></OBJECT>
+);
+	}
+
+	print OUT qq(<OBJECT><PROPERTY NAME="address" VALUE="any"/><PROPERTY NAME="position" VALUE="0"/><PROPERTY NAME="permission" VALUE="0"/><PROPERTY NAME="cluster_dns_properties" VALUE="0"/><PROPERTY NAME="address_option" VALUE="2"/><PROPERTY NAME="__type" VALUE=".com.infoblox.dns.cluster_ddns_updater"/><PROPERTY NAME="netmask" VALUE="255.255.255.255"/></OBJECT>
+<OBJECT><PROPERTY NAME="address" VALUE="any"/><PROPERTY NAME="position" VALUE="0"/><PROPERTY NAME="permission" VALUE="0"/><PROPERTY NAME="cluster_dns_properties" VALUE="0"/><PROPERTY NAME="address_option" VALUE="2"/><PROPERTY NAME="__type" VALUE=".com.infoblox.dns.cluster_qacl_item"/><PROPERTY NAME="netmask" VALUE="255.255.255.255"/></OBJECT>
+<OBJECT><PROPERTY NAME="address" VALUE="any"/><PROPERTY NAME="position" VALUE="0"/><PROPERTY NAME="permission" VALUE="0"/><PROPERTY NAME="cluster_dns_properties" VALUE="0"/><PROPERTY NAME="address_option" VALUE="2"/><PROPERTY NAME="__type" VALUE=".com.infoblox.dns.cluster_tacl_item"/><PROPERTY NAME="netmask" VALUE="255.255.255.255"/></OBJECT>
+);
+}
+else {
+	if ((!defined($dnssec)) || ($nios_version_major > 5 ||
+	($nios_version_major == 5 && $nios_version_minor > 0))){
+
+		print OUT qq(<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.dns.ac_item"/><PROPERTY NAME="function_type" VALUE="DDNS_UPDATE"/><PROPERTY NAME="ac_type" VALUE="ADDRESS"/><PROPERTY NAME="address_option" VALUE="ANY"/><PROPERTY NAME="permission" VALUE="ALLOW"/><PROPERTY NAME="x_tsig_option" VALUE="false"/><PROPERTY NAME="position" VALUE="0"/><PROPERTY NAME="parent" VALUE=".com.infoblox.dns.cluster_dns_properties\$0"/><PROPERTY NAME="address" VALUE="any"/><PROPERTY NAME="netmask" VALUE="255.255.255.255"/><PROPERTY NAME="tsig_key_name" VALUE=""/></OBJECT>
+);
+	}
+	if ($recursion){
+		print OUT qq(<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.dns.ac_item"/><PROPERTY NAME="function_type" VALUE="RECURSIVE_QUERY"/><PROPERTY NAME="ac_type" VALUE="ADDRESS"/><PROPERTY NAME="address_option" VALUE="ANY"/><PROPERTY NAME="permission" VALUE="ALLOW"/><PROPERTY NAME="x_tsig_option" VALUE="false"/><PROPERTY NAME="position" VALUE="0"/><PROPERTY NAME="parent" VALUE=".com.infoblox.dns.cluster_dns_properties\$0"/><PROPERTY NAME="address" VALUE="any"/><PROPERTY NAME="netmask" VALUE="255.255.255.255"/><PROPERTY NAME="tsig_key_name" VALUE=""/></OBJECT>
+);
+	}
+
+	print OUT qq(<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.dns.ac_item"/><PROPERTY NAME="function_type" VALUE="ZONE_TRANSFER"/><PROPERTY NAME="ac_type" VALUE="ADDRESS"/><PROPERTY NAME="address_option" VALUE="ANY"/><PROPERTY NAME="permission" VALUE="ALLOW"/><PROPERTY NAME="x_tsig_option" VALUE="false"/><PROPERTY NAME="position" VALUE="0"/><PROPERTY NAME="parent" VALUE=".com.infoblox.dns.cluster_dns_properties\$0"/><PROPERTY NAME="address" VALUE="any"/><PROPERTY NAME="netmask" VALUE="255.255.255.255"/><PROPERTY NAME="tsig_key_name" VALUE=""/></OBJECT>
+<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.dns.ac_item"/><PROPERTY NAME="function_type" VALUE="QUERY"/><PROPERTY NAME="ac_type" VALUE="ADDRESS"/><PROPERTY NAME="address_option" VALUE="ANY"/><PROPERTY NAME="permission" VALUE="ALLOW"/><PROPERTY NAME="x_tsig_option" VALUE="false"/><PROPERTY NAME="position" VALUE="0"/><PROPERTY NAME="parent" VALUE=".com.infoblox.dns.cluster_dns_properties\$0"/><PROPERTY NAME="address" VALUE="any"/><PROPERTY NAME="netmask" VALUE="255.255.255.255"/><PROPERTY NAME="tsig_key_name" VALUE=""/></OBJECT>
+);
+
+}
+if ($perf_test) {
+print OUT qq(<OBJECT><PROPERTY NAME="email_notify" VALUE="false"/><PROPERTY NAME="cluster" VALUE="0"/><PROPERTY NAME="specify_email_relay" VALUE="false"/><PROPERTY NAME="__type" VALUE=".com.infoblox.one.cluster_email"/></OBJECT>
+);
+}
+else {
+	my $cluster_time ='0';
+	if ($nios_version_major > 4  ||  ($nios_version_major == 4 && $nios_version_minor > 3) || 
+	($nios_version_major == 4 && $nios_version_minor == 3 && $nios_version_revision >= 4)){
+		$cluster_time = '.com.infoblox.one.cluster_time$0'; #Changed in 4.3r4-0
+	}
+		
+		print OUT qq(<OBJECT><PROPERTY NAME="email_notify" VALUE="true"/><PROPERTY NAME="email_relay_name" VALUE="$client_ip"/><PROPERTY NAME="cluster" VALUE="0"/><PROPERTY NAME="email_address" VALUE="me\@myplace.com"/><PROPERTY NAME="specify_email_relay" VALUE="true"/><PROPERTY NAME="__type" VALUE=".com.infoblox.one.cluster_email"/></OBJECT>
+<OBJECT><PROPERTY NAME="address" VALUE="10.34.0.100"/><PROPERTY NAME="position" VALUE="0"/><PROPERTY NAME="cluster_time" VALUE="$cluster_time"/><PROPERTY NAME="__type" VALUE=".com.infoblox.one.ntp_server"/><PROPERTY NAME="authentication" VALUE="false"/></OBJECT>
+<OBJECT>
+<PROPERTY NAME="cluster_monitor" VALUE="0"/>
+<PROPERTY NAME="address" VALUE="$client_ip"/>
+<PROPERTY NAME="position" VALUE="0"/>
+<PROPERTY NAME="severity" VALUE="$syslog_prio"/>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.one.cluster_syslog_server"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="cluster_monitor" VALUE="0"/>
+<PROPERTY NAME="address" VALUE="$client_ip"/>
+<PROPERTY NAME="position" VALUE="0"/>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.one.cluster_trap_receiver"/>
+</OBJECT>);
+}
+
+if ($recursion && ! defined($dns_root)){
+	warn "Adding cluster forwarder $client_ip\n";
+	print OUT qq(<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.dns.cluster_forwarder"/><PROPERTY NAME="position" VALUE="0"/><PROPERTY NAME="cluster_dns_properties" VALUE="0"/><PROPERTY NAME="address" VALUE="$client_ip"/></OBJECT>
+	);
+}
+if ($tftp_test) {
+	foreach my $v  (@virtual_nodes) {
+	  print OUT qq(<OBJECT><PROPERTY NAME="address" VALUE="any"/><PROPERTY NAME="position" VALUE="0"/><PROPERTY NAME="permission" VALUE="0"/><PROPERTY NAME="member_tftp_properties" VALUE="$v"/><PROPERTY NAME="address_option" VALUE="2"/><PROPERTY NAME="__type" VALUE=".com.infoblox.one.tftp_access_item"/><PROPERTY NAME="netmask" VALUE="255.255.255.255"/></OBJECT>
+);
+	}
+}
+if (defined($radius)){
+	warn "Adding RADIUS users\n";
+	print OUT qq(<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.radius.nas"/><PROPERTY NAME="ip_address" VALUE="$client_ip"/><PROPERTY NAME="disabled" VALUE="false"/><PROPERTY NAME="name" VALUE="mynas$vnode"/><PROPERTY NAME="shared_secret" VALUE="test"/>><PROPERTY NAME="external_service_parent" VALUE="0"/></OBJECT>
+);
+	foreach my $i (1..$radius){
+	    if (defined($chap)){
+		print OUT qq(<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.radius.user"/><PROPERTY NAME="password_type" VALUE="1"/><PROPERTY NAME="password_timestamp" VALUE="1239993128"/><PROPERTY NAME="disabled" VALUE="false"/><PROPERTY NAME="name" VALUE="chapuser$i"/><PROPERTY NAME="parent" VALUE="0"/><PROPERTY NAME="password" VALUE="{0}_{3des}_KAAAAImY3R4puzSU1p/99vIOLiXGUgaVSUGr2f47EoMHKs4ePKY0PU6k64o="/><PROPERTY NAME="cleartext_password" VALUE="{0}_{3des}_EAAAAMoSGhWm0soTrAIiavr3lik="/></OBJECT>
+);
+	    }
+	    else {
+		print OUT qq(<OBJECT><PROPERTY NAME="__type" VALUE=".com.infoblox.radius.user"/><PROPERTY NAME="parent" VALUE="0"/><PROPERTY NAME="password_type" VALUE="0"/><PROPERTY NAME="password_timestamp" VALUE="1211917089"/><PROPERTY NAME="disabled" VALUE="false"/><PROPERTY NAME="name" VALUE="user$i"/><PROPERTY NAME="password" VALUE="{0}_{3des}_KAAAAImY3R4puzSU1p/99vIOLiXGUgaVSUGr2f47EoMHKs4ePKY0PU6k64o="/></OBJECT>
+);
+	    }
+
+
+	}
+
+}
+close(INP);
+opendir(XMLDIR,".") || die "opendir $dir\n";
+while ($d = readdir(XMLDIR)){
+	next unless $d =~ /\.xml$/;
+	next if $d =~ /onedb/;
+	open(XML,$d)  || warn "Open $d failed\n";
+	print "Writing $d\n";
+	while (<XML>){ print OUT;};
+}
+print OUT "\n</DATABASE>\n";
+close(OUT);
+system("cp onedb.xml-new onedb.xml");
+
+if ($tftp_test || $http_test) {
+	system("mkdir storage");
+	system("mkdir storage/tftpboot");
+	system("dd if=/dev/zero of=storage/tftpboot/file123 bs=1k count=2000");
+	system("tar -czf $outfile onedb.xml active_ip.txt active_pnoid.txt storage/tftpboot/* ");
+}
+else {
+	system("tar -czf $outfile onedb.xml active_ip.txt active_pnoid.txt");
+}
+#system("tar -czf $outfile onedb.xml active_ip.txt active_pnoid.txt passive_ip.txt passive_pnoid.txt");
+sub get_property {
+	my $obj = shift;
+	my $prop = shift;
+
+	if ( $$obj =~ /\"$prop\"[^\"]+\"([^\"]+)/){
+		return($1);
+	}
+	warn "Property $prop not found in object\n";
+	return(undef);
+}
+sub set_property {
+	my $obj = shift;
+	my $prop = shift;
+	my $val = shift;
+
+	if ( $$obj !~ /\"$prop\"/ ){
+		warn "Adding $prop\n";
+		$$obj =~ s/\<\/OBJECT/\<PROPERTY NAME=\"$prop\" VALUE=\"$val\"\/>\<\/OBJECT/;
+	}
+	else {
+		$$obj =~ s/(\"$prop\"[^\"]+\")([^\"]+)/${1}${val}/;
+	}
+	unless ( $$obj =~  /\"$prop\"[^\"]+\"\Q$val\E\"/){
+		warn "Failed to add $prop  = $val to $$obj\n";
+		return(undef);
+	}
+	return('1');
+}
+sub labipv6 {
+	my $ipv4 = shift;
+	my @a=split(/\./, $ipv4);
+	my $ipv6 = sprintf("2001:0db8:%02x%02x:%02x00::%02x",
+			@a);
+	return($ipv6);
+}
+sub usage {
+	my $pgm = $0;
+	$pgm =~ s/^.*\///;
+	print "\n\t$_[0]\n\n";
+	print "Usage: $pgm \\",
+		"\t-c <Test client IP>\n",
+		"\t-d <Data directory>\n",
+		"\t-i <Default database tarball>\n",
+		"\t-o <Output database tarball>\n",
+		"\t-C  \# Setup for CHO test\n",
+		"\t-G  \# Setup client as IP gateway\n",
+		"\t-u  \# Enable DDNS updates.\n",
+		"\t-l <logging vnode>  \# Enable DHCP lease legging.\n",
+		"\t-L <Lease time>  \# Set DHCP lease time.\n",
+		"\t-r  \# Enable recursive DNS queries.\n",
+		"\t-forward_only  \# Forward queries only to client.\n",
+		"\t-t  \# Enable DHCP thresholds.\n",
+		"\t-http  \# Enable HTTP download service.\n",
+		"\t-ipv6  \# Add IPv6 address on all nodes.\n",
+		"\t-tftp  \# Enable TFTP download service.\n",
+		"\t-F <comma-separated list of vnodes to be master candidates>\n",
+		"\t-S <Set remote syslog priority threshold>\n",
+		"\t-1000  \# Force all ethernet ports to 1000Mbps/full duplex.\n",
+		"\t-100  \# Force all ethernet ports to 100Mbps/full duplex.\n",
+		"\t-dhcp_domain <Set forward domain for option-12 DDNS updates>\n",
+		"\t-ddns_txt_rec <Set DHCP DDNS TXT record update policy>\n",
+		"\t-fo_split <split value for DHCP FO associations>\n",
+		"\t-no-backup  \# Disable automatic database backup.\n",
+		"\t-no-lease-recycle  \# Disable lease recycle bin.\n",
+		"\t-no-recycle-bin  \# Disable recycle bin.\n",
+		"\t-webportal <Memory MB>  \# Enable Hosted Web UI with <X> MB RAM.\n",
+		"\t-max-recursive <#>  \# Limit recursive clients.\n",
+		"\t-max-cache <#>  \# Set DNS cache size (0-4095).\n",
+		"\t-radius <Number users>  \# Enable RADIUS authentication with N local user accounts.\n",
+		"\t-dnssec  \# Enable DNSSEC.\n",
+		"\t-rate-limit <network:netmask:rate:burst>  \# Enable DNS Rate Limits.\n",
+		"\t-dns-alert <txid_threshold> <port_threshold>  \# Enable DNS Alerts.\n",
+		"\t-views <#>  \# Number of Views.\n",
+		"\t-named-threads <#>  \# Set number of named threads.\n",
+		"\t-dns-root <IP address of root nameserver>  \# Probably running wdns.\n",
+		"\t-log-queries  \# Log DNS queries.\n",
+		"\t-chap  \# Enable RADIUS CHAP.\n";
+	exit(1);
+}
