@@ -1,0 +1,4 @@
+DHCP_Fingerprint/BYOD7 qaui32client10 test2 IP_WEBUI 10.35.117.6 USE_PROXY 0 SCALABILITY_SUITE_FILE scalability_csv_suite.pl SNAPSHOT_ON_ERROR 1 TRY_RERUN TRUE 
+DHCP_Fingerprint/proxy qaui32client10 test3 IP_WEBUI 10.35.124.10 USE_PROXY 1 PROXY_HOST 10.102.20.200 PROXY_USER frtest PROXY_PATH /home/frtest/proxy/fingerprint/test-data/script/dhcp MEMBERS_IP 10.35.124.10,10.35.113.16 MEMBERS_NAMES infoblox.localdomain,member0.com SCALABILITY_SUITE_FILE scalability_csv_suite.pl TRY_RERUN TRUE 
+RIR/func_tests qaui32client11 test2 IP_WEBUI 10.35.109.15 USE_PROXY 0 TRY_RERUN TRUE 
+Discovery/csv qaui32client11 test3 IP_WEBUI 10.35.109.16 USE_PROXY 0 SCALABILITY_SUITE_FILE discovery_csv.pl SNAPSHOT_ON_ERROR 1 TRY_RERUN TRUE 
